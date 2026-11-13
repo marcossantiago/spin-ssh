@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +24,8 @@ Usage:
   spin-ssh [flags] [query] [-- ssh args...]   pick a site and connect
   spin-ssh revoke [query]                     remove your key from a site user
   spin-ssh key                                choose which SSH key to use again
+  spin-ssh token                              save a new SpinupWP API token
+  spin-ssh update                             update to the latest release
 
 Flags:
   -r, --refresh   reload servers and sites from SpinupWP before picking
@@ -30,11 +33,11 @@ Flags:
   -v, --version   print the version
 
 With a query that matches exactly one site, the picker is skipped.
-Needs SPINUPWP_API_TOKEN (SpinupWP > My Account or Team Settings > API Tokens).
-Config: ` + "~/.config/spin-ssh, cache: ~/.cache/spin-ssh.\n"
+The SpinupWP API token comes from SPINUPWP_API_TOKEN, or is asked for and saved on
+first run. Config: ` + "~/.config/spin-ssh, cache: ~/.cache/spin-ssh.\n"
 
 type options struct {
-	command string // "", "revoke" or "key"
+	command string // "", "revoke", "key", "token" or "update"
 	query   string
 	refresh bool
 	print   bool
@@ -43,6 +46,7 @@ type options struct {
 
 func main() {
 	ui.Version = Version()
+	startUpdateCheck()
 	opts, err := parseArgs(os.Args[1:])
 	if err == nil {
 		err = run(opts)
@@ -73,7 +77,11 @@ loop:
 			fmt.Printf(usage, Version())
 			os.Exit(0)
 		case "-v", "--version", "version":
-			fmt.Println("spin-ssh", Version())
+			if ui.UpdateNotice != "" {
+				fmt.Printf("spin-ssh %s (%s)\n", Version(), ui.UpdateNotice)
+			} else {
+				fmt.Println("spin-ssh", Version())
+			}
 			os.Exit(0)
 		default:
 			if strings.HasPrefix(a, "-") {
@@ -82,7 +90,7 @@ loop:
 			words = append(words, a)
 		}
 	}
-	if len(words) > 0 && (words[0] == "revoke" || words[0] == "key") {
+	if len(words) > 0 && slices.Contains([]string{"revoke", "key", "token", "update"}, words[0]) {
 		opts.command, words = words[0], words[1:]
 	}
 	opts.query = strings.Join(words, " ")
@@ -90,12 +98,29 @@ loop:
 }
 
 func run(opts options) error {
-	token := os.Getenv("SPINUPWP_API_TOKEN")
-	if token == "" {
-		return errors.New("set SPINUPWP_API_TOKEN to your SpinupWP API token (My Account > API Tokens)")
+	switch opts.command {
+	case "update":
+		return runUpdate()
+	case "token":
+		_, err := setupToken()
+		return err
 	}
-	client := spinupwp.New(token)
 
+	token, fromFile, err := resolveToken()
+	if err != nil {
+		return err
+	}
+	err = runWithToken(spinupwp.New(token), opts)
+	if spinupwp.IsUnauthorized(err) {
+		if fromFile {
+			return fmt.Errorf("%w\nYour saved token was rejected; run spin-ssh token to replace it", err)
+		}
+		return fmt.Errorf("%w\n%s was rejected; set it to a valid SpinupWP API token", err, tokenEnv)
+	}
+	return err
+}
+
+func runWithToken(client *spinupwp.Client, opts options) error {
 	cfg, err := ensureKey(client, opts.command == "key")
 	if err != nil || opts.command == "key" {
 		return err

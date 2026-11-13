@@ -165,3 +165,38 @@ func TouchRecent(id int64) error {
 	recent[id] = time.Now()
 	return writeJSON(filepath.Join(CacheDir(), "recent.json"), recent)
 }
+
+// TokenFile is where the API token is saved when it isn't in the environment.
+func TokenFile() string { return filepath.Join(ConfigDir(), "credentials.json") }
+
+// LoadToken returns the saved API token, or "".
+func LoadToken() string {
+	var c struct {
+		Token string `json:"spinupwp_api_token"`
+	}
+	_, _ = readJSON(TokenFile(), &c)
+	return c.Token
+}
+
+// SaveToken saves the API token, readable only by the user.
+func SaveToken(token string) error {
+	return writeJSON(TokenFile(), map[string]string{"spinupwp_api_token": token})
+}
+
+// UpdateState is the last check for a new release.
+type UpdateState struct {
+	CheckedAt time.Time `json:"checked_at"`
+	Latest    string    `json:"latest"`
+}
+
+// LoadUpdateState returns the last update check; zero if there was none.
+func LoadUpdateState() UpdateState {
+	var s UpdateState
+	_, _ = readJSON(filepath.Join(CacheDir(), "update.json"), &s)
+	return s
+}
+
+// SaveUpdateState records an update check.
+func SaveUpdateState(s UpdateState) error {
+	return writeJSON(filepath.Join(CacheDir(), "update.json"), s)
+}

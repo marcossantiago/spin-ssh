@@ -73,6 +73,12 @@ func Note(format string, args ...any) {
 	fmt.Fprintln(os.Stderr, t.fg(t.accent).Render("›")+" "+fmt.Sprintf(format, args...))
 }
 
+// Warn prints a line with a yellow "!" to stderr.
+func Warn(format string, args ...any) {
+	t := currentTheme()
+	fmt.Fprintln(os.Stderr, t.fg(t.warn).Render("!")+" "+fmt.Sprintf(format, args...))
+}
+
 // Success prints a line with a green check to stderr.
 func Success(format string, args ...any) {
 	t := currentTheme()

@@ -3,6 +3,11 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	"golang.org/x/term"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
@@ -13,9 +18,14 @@ import (
 var ErrCancelled = errors.New("cancelled")
 
 // Run shows a spinner with title while fn runs. ctrl+c cancels fn's context.
+// Without a terminal (scripts, CI) it prints the title and runs fn plainly.
 func Run(title string, fn func(ctx context.Context) error) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprintln(os.Stderr, title)
+		return fn(ctx)
+	}
 	m := &task{
 		title:  title,
 		spin:   spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(currentTheme().fg(currentTheme().accent))),
@@ -73,6 +83,15 @@ func (m *task) View() tea.View {
 
 // Ask prompts for one line of text. It returns ErrCancelled on esc or ctrl+c.
 func Ask(question, placeholder string) (string, error) {
+	return ask1(question, placeholder, false)
+}
+
+// AskSecret is Ask with the typed text masked, for tokens.
+func AskSecret(question string) (string, error) {
+	return ask1(question, "", true)
+}
+
+func ask1(question, placeholder string, secret bool) (string, error) {
 	t := currentTheme()
 	in := textinput.New()
 	in.Prompt = "❯ "
@@ -83,6 +102,10 @@ func Ask(question, placeholder string) (string, error) {
 	styles.Focused.Placeholder = t.fg(t.faint)
 	styles.Cursor.Color = t.accent
 	in.SetStyles(styles)
+	if secret {
+		in.EchoMode = textinput.EchoPassword
+		in.EchoCharacter = '•'
+	}
 	m := &ask{question: question, input: in}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return "", err
@@ -123,6 +146,60 @@ func (m *ask) View() tea.View {
 		return tea.NewView("")
 	}
 	return tea.NewView(currentTheme().fg(currentTheme().text).Bold(true).Render(m.question) + versionTag() + "\n" + m.input.View())
+}
+
+// Confirm asks a yes/no question; enter takes the default. It returns ErrCancelled
+// on esc or ctrl+c.
+func Confirm(question string, def bool) (bool, error) {
+	m := &confirm{question: question, answer: def}
+	if _, err := tea.NewProgram(m).Run(); err != nil {
+		return false, err
+	}
+	if m.cancelled {
+		return false, ErrCancelled
+	}
+	return m.answer, nil
+}
+
+type confirm struct {
+	question  string
+	answer    bool
+	done      bool
+	cancelled bool
+}
+
+func (m *confirm) Init() tea.Cmd { return nil }
+
+func (m *confirm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+	switch strings.ToLower(key.String()) {
+	case "y":
+		m.answer, m.done = true, true
+	case "n":
+		m.answer, m.done = false, true
+	case "enter":
+		m.done = true
+	case "ctrl+c", "esc":
+		m.done, m.cancelled = true, true
+	default:
+		return m, nil
+	}
+	return m, tea.Quit
+}
+
+func (m *confirm) View() tea.View {
+	if m.done {
+		return tea.NewView("")
+	}
+	t := currentTheme()
+	hint := "y/N"
+	if m.answer {
+		hint = "Y/n"
+	}
+	return tea.NewView(t.fg(t.text).Bold(true).Render(m.question) + " " + t.fg(t.dim).Render(hint) + versionTag())
 }
 
 // versionTag is the version, faint, for the end of a one-line screen.

@@ -5,24 +5,41 @@ user yet, spin-ssh adds it through the SpinupWP API first.
 
 ## Install
 
-Download a binary for macOS or Linux from
-[Releases](https://github.com/marcossantiago/spin-ssh/releases), or build it with Go:
-
 ```sh
-go install github.com/marcossantiago/spin-ssh@latest
+curl -fsSL https://raw.githubusercontent.com/marcossantiago/spin-ssh/main/install.sh | sh
 ```
 
-On macOS, a downloaded binary may need `xattr -d com.apple.quarantine spin-ssh`
-before it will run.
-
-Create an API token in SpinupWP (My Account > API Tokens) and export it:
+This downloads the latest release for your Mac or Linux machine, checks it against
+the release's checksums, and installs it to `~/.local/bin` without sudo. It tells you
+if that folder isn't on your `PATH` yet. To pick a version or a folder:
 
 ```sh
-export SPINUPWP_API_TOKEN=...
+curl -fsSL https://raw.githubusercontent.com/marcossantiago/spin-ssh/main/install.sh \
+  | SPIN_SSH_VERSION=v0.2.0 SPIN_SSH_INSTALL_DIR=/usr/local/bin sh
 ```
 
-Your public key must already be on the SpinupWP team (Team Settings > SSH Keys).
-spin-ssh never creates team keys.
+If you work on spin-ssh itself: `go install github.com/marcossantiago/spin-ssh@latest`.
+
+### Before the first run
+
+- **Your public key must be on the SpinupWP team** (Team Settings → SSH Keys). Ask an
+  admin to add it. spin-ssh never creates team keys.
+- **An API token.** On first run spin-ssh offers to open SpinupWP, where you create one
+  under My Account → API Tokens. Paste it in and spin-ssh checks it and saves it to
+  `~/.config/spin-ssh/credentials.json`, readable only by you. If
+  `SPINUPWP_API_TOKEN` is set, it's used instead. `spin-ssh token` replaces the saved
+  token.
+
+### Updating
+
+```sh
+spin-ssh update
+```
+
+Once a day spin-ssh checks GitHub in the background. When a new release is out, the
+picker's title bar and `spin-ssh --version` say so. If you installed with `go install`,
+`spin-ssh update` prints the command to run instead. Set `SPIN_SSH_NO_UPDATE_CHECK=1`
+to turn the check off.
 
 ## Use
 
@@ -34,6 +51,8 @@ spin-ssh --print shop         # print the ssh command instead of running it
 spin-ssh --refresh            # reload servers and sites first
 spin-ssh revoke               # remove your key from a site user
 spin-ssh key                  # choose which SSH key to use again
+spin-ssh token                # save a new SpinupWP API token
+spin-ssh update               # update to the latest release
 spin-ssh --version            # also shown in the picker's title bar
 ```
 

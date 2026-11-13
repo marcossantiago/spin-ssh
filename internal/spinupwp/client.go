@@ -103,6 +103,17 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
+// IsUnauthorized reports whether err means the token was rejected.
+func IsUnauthorized(err error) bool {
+	var apiErr *Error
+	return errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden)
+}
+
+// Check makes the cheapest authenticated call, to test the token.
+func (c *Client) Check(ctx context.Context) error {
+	return c.do(ctx, http.MethodGet, "/servers?limit=1", nil, nil)
+}
+
 // ListServers returns all servers.
 func (c *Client) ListServers(ctx context.Context) ([]Server, error) {
 	return list[Server](ctx, c, "/servers")

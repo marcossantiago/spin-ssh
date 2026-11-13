@@ -15,8 +15,9 @@ import (
 	"github.com/sahilm/fuzzy"
 )
 
-// Version is shown on every screen; main sets it.
-var Version string
+// Version is shown on every screen; main sets it. UpdateNotice, when set, is shown
+// next to it (such as "v0.2.0 available: spin-ssh update").
+var Version, UpdateNotice string
 
 // Item is one row in the picker.
 type Item struct {
@@ -330,6 +331,9 @@ func (m *picker) View() tea.View {
 	title := t.fg(t.accent).Bold(true).Render(m.opts.Title)
 	if Version != "" {
 		title += " " + t.fg(t.faint).Render(Version)
+	}
+	if UpdateNotice != "" {
+		title += t.fg(t.faint).Render(" · ") + t.fg(t.warn).Render(UpdateNotice)
 	}
 	search := box(m.width, 3, title, m.statusText(),
 		[]string{" " + m.input.View()}, t.fg(t.accent))
