@@ -20,7 +20,8 @@ const staleAfter = 15 * time.Minute
 
 // pickSite shows the sites (only those keep returns true for, when set) and returns the
 // chosen one, or nil if the user quit. A query matching exactly one site skips the picker.
-func pickSite(client *spinupwp.Client, cfg *store.Config, opts options, title string, keep func(store.Site) bool) (*store.Site, error) {
+func pickSite(s *session, cfg *store.Config, opts options, title string, keep func(store.Site) bool) (*store.Site, error) {
+	client, readOnly := s.client, s.readOnly()
 	inv, err := store.LoadInventory()
 	if err != nil {
 		return nil, err
@@ -43,9 +44,9 @@ func pickSite(client *spinupwp.Client, cfg *store.Config, opts options, title st
 		// Recently used sites first, most recent at the top; ties in search keep this order.
 		slices.SortStableFunc(sites, func(a, b store.Site) int { return recent[b.ID].Compare(recent[a.ID]) })
 		var items []ui.Item
-		for _, s := range sites {
-			if keep == nil || keep(s) {
-				items = append(items, siteItem(s, cfg, recent[s.ID]))
+		for _, site := range sites {
+			if keep == nil || keep(site) {
+				items = append(items, siteItem(site, cfg, recent[site.ID], readOnly))
 			}
 		}
 		return items
@@ -60,8 +61,8 @@ func pickSite(client *spinupwp.Client, cfg *store.Config, opts options, title st
 
 	if opts.query != "" {
 		if m := ui.Filter(items, opts.query); len(m) == 1 {
-			s := items[m[0]].Value.(store.Site)
-			return &s, nil
+			site := items[m[0]].Value.(store.Site)
+			return &site, nil
 		}
 	}
 
@@ -93,8 +94,8 @@ func pickSite(client *spinupwp.Client, cfg *store.Config, opts options, title st
 	if err != nil || it == nil {
 		return nil, err
 	}
-	s := it.Value.(store.Site)
-	return &s, nil
+	site := it.Value.(store.Site)
+	return &site, nil
 }
 
 // fetchInventory loads servers and sites, joins them and saves the cache.
@@ -115,10 +116,6 @@ func fetchInventory(ctx context.Context, client *spinupwp.Client) (*store.Invent
 	inv := &store.Inventory{FetchedAt: time.Now()}
 	for _, s := range sites {
 		srv := byID[s.ServerID]
-		keys := make([]store.Key, len(s.SSHKeys))
-		for i, k := range s.SSHKeys {
-			keys[i] = store.Key{ID: k.ID, Name: k.Name}
-		}
 		inv.Sites = append(inv.Sites, store.Site{
 			ID:         s.ID,
 			Domain:     s.Domain,
@@ -129,18 +126,28 @@ func fetchInventory(ctx context.Context, client *spinupwp.Client) (*store.Invent
 			ServerName: srv.Name,
 			Host:       srv.IPAddress,
 			Port:       srv.SSHPort,
-			Keys:       keys,
+			Keys:       storeKeys(s.SSHKeys),
 		})
 	}
 	slices.SortFunc(inv.Sites, func(a, b store.Site) int { return strings.Compare(a.Domain, b.Domain) })
 	return inv, store.SaveInventory(inv)
 }
 
-func siteItem(s store.Site, cfg *store.Config, lastUsed time.Time) ui.Item {
+func storeKeys(refs []spinupwp.SSHKeyRef) []store.Key {
+	keys := make([]store.Key, len(refs))
+	for i, k := range refs {
+		keys[i] = store.Key{ID: k.ID, Name: k.Name}
+	}
+	return keys
+}
+
+func siteItem(s store.Site, cfg *store.Config, lastUsed time.Time, readOnly bool) ui.Item {
 	access := ui.Field{Label: "Access", Value: "Your key is on this site user", Tone: ui.ToneGood}
 	switch {
 	case s.UserAuth == "password":
 		access = ui.Field{Label: "Access", Value: "Password login only: SpinupWP can't add keys", Tone: ui.ToneBad}
+	case !s.HasKey(cfg.SSHKeyID) && readOnly:
+		access = ui.Field{Label: "Access", Value: "Your key isn't on it: add it in SpinupWP (read-only token)", Tone: ui.ToneWarn}
 	case !s.HasKey(cfg.SSHKeyID):
 		access = ui.Field{Label: "Access", Value: "Your key is added when you connect", Tone: ui.ToneWarn}
 	}

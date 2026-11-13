@@ -2,6 +2,8 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -169,18 +171,44 @@ func TouchRecent(id int64) error {
 // TokenFile is where the API token is saved when it isn't in the environment.
 func TokenFile() string { return filepath.Join(ConfigDir(), "credentials.json") }
 
-// LoadToken returns the saved API token, or "".
-func LoadToken() string {
-	var c struct {
-		Token string `json:"spinupwp_api_token"`
-	}
-	_, _ = readJSON(TokenFile(), &c)
-	return c.Token
+// Credentials is what token setup saves.
+type Credentials struct {
+	Token string `json:"spinupwp_api_token"`
+	// Organization is the SpinupWP organization slug, the part after spinupwp.app/,
+	// used to link to its API settings.
+	Organization string `json:"organization,omitempty"`
 }
 
-// SaveToken saves the API token, readable only by the user.
-func SaveToken(token string) error {
-	return writeJSON(TokenFile(), map[string]string{"spinupwp_api_token": token})
+// LoadCredentials returns the saved credentials; zero if there are none.
+func LoadCredentials() Credentials {
+	var c Credentials
+	_, _ = readJSON(TokenFile(), &c)
+	return c
+}
+
+// SaveCredentials saves the credentials, readable only by the user.
+func SaveCredentials(c Credentials) error { return writeJSON(TokenFile(), c) }
+
+// IsReadOnly reports whether SpinupWP refused a change made with token before.
+func IsReadOnly(token string) bool {
+	var marks map[string]bool
+	_, _ = readJSON(filepath.Join(CacheDir(), "read-only-tokens.json"), &marks)
+	return marks[tokenID(token)]
+}
+
+// MarkReadOnly remembers that token can't make changes, so spin-ssh stops trying.
+// Only a hash of the token is stored.
+func MarkReadOnly(token string) error {
+	path := filepath.Join(CacheDir(), "read-only-tokens.json")
+	marks := map[string]bool{}
+	_, _ = readJSON(path, &marks)
+	marks[tokenID(token)] = true
+	return writeJSON(path, marks)
+}
+
+func tokenID(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:8])
 }
 
 // UpdateState is the last check for a new release.

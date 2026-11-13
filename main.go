@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/term"
+
 	"github.com/marcossantiago/spin-ssh/internal/spinupwp"
 	"github.com/marcossantiago/spin-ssh/internal/store"
 	"github.com/marcossantiago/spin-ssh/internal/ui"
@@ -53,6 +55,9 @@ func main() {
 	}
 	if errors.Is(err, ui.ErrCancelled) {
 		os.Exit(130)
+	}
+	if errors.Is(err, errReported) {
+		os.Exit(1)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "spin-ssh %s: %v\n", Version(), err)
@@ -110,7 +115,7 @@ func run(opts options) error {
 	if err != nil {
 		return err
 	}
-	err = runWithToken(spinupwp.New(token), opts)
+	err = runWithToken(&session{client: spinupwp.New(token), token: token}, opts)
 	if spinupwp.IsUnauthorized(err) {
 		if fromFile {
 			return fmt.Errorf("%w\nYour saved token was rejected; run spin-ssh token to replace it", err)
@@ -120,21 +125,33 @@ func run(opts options) error {
 	return err
 }
 
-func runWithToken(client *spinupwp.Client, opts options) error {
-	cfg, err := ensureKey(client, opts.command == "key")
+// errReported is returned after the problem was already explained to the user.
+var errReported = errors.New("reported")
+
+// session is the API client and the token it uses.
+type session struct {
+	client *spinupwp.Client
+	token  string
+}
+
+// readOnly reports whether SpinupWP refused a change made with this token before.
+func (s *session) readOnly() bool { return store.IsReadOnly(s.token) }
+
+func runWithToken(s *session, opts options) error {
+	cfg, err := ensureKey(s.client, opts.command == "key")
 	if err != nil || opts.command == "key" {
 		return err
 	}
 
 	if opts.command == "revoke" {
-		return revoke(client, cfg, opts)
+		return revoke(s, cfg, opts)
 	}
 
-	site, err := pickSite(client, cfg, opts, "spin-ssh", nil)
+	site, err := pickSite(s, cfg, opts, "spin-ssh", nil)
 	if err != nil || site == nil {
 		return err
 	}
-	if err := grant(client, cfg, site); err != nil {
+	if err := grant(s, cfg, site); err != nil {
 		return err
 	}
 	return connect(cfg, site, opts)
@@ -174,25 +191,33 @@ func connect(cfg *store.Config, site *store.Site, opts options) error {
 }
 
 // grant adds the user's team key to the site user unless the cache says it's there.
-func grant(client *spinupwp.Client, cfg *store.Config, site *store.Site) error {
+// With a read-only token it explains how to add the key in SpinupWP instead.
+func grant(s *session, cfg *store.Config, site *store.Site) error {
 	if site.HasKey(cfg.SSHKeyID) {
 		return nil
 	}
 	if site.UserAuth == "password" {
 		return fmt.Errorf("%s's site user %s uses password authentication; SpinupWP can only add SSH keys to site users with publickey authentication (change it in the site's settings)", site.Domain, site.SiteUser)
 	}
+	if s.readOnly() {
+		return grantByHand(s, cfg, site)
+	}
+
 	title := fmt.Sprintf("Adding your key %q to %s on %s…", cfg.SSHKeyName, site.SiteUser, site.Domain)
 	err := ui.Run(title, func(ctx context.Context) error {
-		id, err := client.AddSiteUserKey(ctx, site.ID, cfg.SSHKeyID)
+		id, err := s.client.AddSiteUserKey(ctx, site.ID, cfg.SSHKeyID)
 		if err != nil {
 			return err
 		}
-		return client.WaitForEvent(ctx, id)
+		return s.client.WaitForEvent(ctx, id)
 	})
-	if spinupwp.IsNotFound(err) {
+	switch {
+	case spinupwp.IsForbidden(err):
+		_ = store.MarkReadOnly(s.token)
+		return grantByHand(s, cfg, site)
+	case spinupwp.IsNotFound(err):
 		return fmt.Errorf("%s no longer exists in SpinupWP, run spin-ssh --refresh", site.Domain)
-	}
-	if err != nil {
+	case err != nil:
 		return err
 	}
 	ui.Success("Added your key %q to %s", cfg.SSHKeyName, site.SiteUser)
@@ -200,20 +225,74 @@ func grant(client *spinupwp.Client, cfg *store.Config, site *store.Site) error {
 	return store.UpdateSite(*site)
 }
 
-func revoke(client *spinupwp.Client, cfg *store.Config, opts options) error {
-	hasKey := func(s store.Site) bool { return s.HasKey(cfg.SSHKeyID) }
-	site, err := pickSite(client, cfg, opts, "spin-ssh revoke", hasKey)
+// grantByHand is grant for a read-only token. The key may have been added in
+// SpinupWP since the cache was filled, so it checks the site first; if the key still
+// isn't there it says how to add it, and offers to try anyway (it might be in
+// authorized_keys outside SpinupWP).
+func grantByHand(s *session, cfg *store.Config, site *store.Site) error {
+	var fresh *spinupwp.Site
+	err := ui.Run(fmt.Sprintf("Checking whether your key is on %s…", site.Domain), func(ctx context.Context) error {
+		var err error
+		fresh, err = s.client.GetSite(ctx, site.ID)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	site.Keys = storeKeys(fresh.SSHKeys)
+	_ = store.UpdateSite(*site)
+	if site.HasKey(cfg.SSHKeyID) {
+		return nil
+	}
+
+	ui.Warn("Your API token is read-only, so spin-ssh can't add your key to %s.", site.Domain)
+	fmt.Fprintf(os.Stderr, `
+  To add it yourself in SpinupWP:
+    1. Open %s and go to the site %s (server %s).
+    2. In the site's settings, add the SSH key %q to the site user %s.
+    3. Once SpinupWP has applied it, run spin-ssh again.
+
+`, dashboardURL(), site.Domain, site.ServerName, cfg.SSHKeyName, site.SiteUser)
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errReported
+	}
+	anyway, err := ui.Confirm("Try connecting anyway?", false)
+	if err != nil {
+		return err
+	}
+	if !anyway {
+		return errReported
+	}
+	return nil
+}
+
+func revoke(s *session, cfg *store.Config, opts options) error {
+	hasKey := func(site store.Site) bool { return site.HasKey(cfg.SSHKeyID) }
+	site, err := pickSite(s, cfg, opts, "spin-ssh revoke", hasKey)
 	if err != nil || site == nil {
 		return err
 	}
-	title := fmt.Sprintf("Removing your key %q from %s on %s…", cfg.SSHKeyName, site.SiteUser, site.Domain)
-	err = ui.Run(title, func(ctx context.Context) error {
-		id, err := client.RemoveSiteUserKey(ctx, site.ID, cfg.SSHKeyID)
-		if err != nil {
-			return err
-		}
-		return client.WaitForEvent(ctx, id)
-	})
+	if !s.readOnly() {
+		title := fmt.Sprintf("Removing your key %q from %s on %s…", cfg.SSHKeyName, site.SiteUser, site.Domain)
+		err = ui.Run(title, func(ctx context.Context) error {
+			id, err := s.client.RemoveSiteUserKey(ctx, site.ID, cfg.SSHKeyID)
+			if err != nil {
+				return err
+			}
+			return s.client.WaitForEvent(ctx, id)
+		})
+	}
+	if s.readOnly() || spinupwp.IsForbidden(err) {
+		_ = store.MarkReadOnly(s.token)
+		ui.Warn("Your API token is read-only, so spin-ssh can't remove your key from %s.", site.Domain)
+		fmt.Fprintf(os.Stderr, `
+  To remove it yourself in SpinupWP:
+    1. Open %s and go to the site %s (server %s).
+    2. In the site's settings, remove the SSH key %q from the site user %s.
+
+`, dashboardURL(), site.Domain, site.ServerName, cfg.SSHKeyName, site.SiteUser)
+		return errReported
+	}
 	if err != nil {
 		return err
 	}

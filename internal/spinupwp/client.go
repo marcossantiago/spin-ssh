@@ -21,7 +21,7 @@ const DefaultBaseURL = "https://api.spinupwp.app/v1"
 // Client talks to the SpinupWP API with a personal or team API token.
 type Client struct {
 	token      string
-	baseURL    string
+	BaseURL    string // DefaultBaseURL; tests point it elsewhere
 	httpClient *http.Client
 	maxRetries int
 }
@@ -30,7 +30,7 @@ type Client struct {
 func New(token string) *Client {
 	return &Client{
 		token:      token,
-		baseURL:    DefaultBaseURL,
+		BaseURL:    DefaultBaseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		maxRetries: 3,
 	}
@@ -103,10 +103,17 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
-// IsUnauthorized reports whether err means the token was rejected.
+// IsUnauthorized reports whether err means the token was rejected (invalid or revoked).
 func IsUnauthorized(err error) bool {
 	var apiErr *Error
-	return errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden)
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized
+}
+
+// IsForbidden reports whether err means the token is valid but can't do this, as with
+// a read-only token making a change.
+func IsForbidden(err error) bool {
+	var apiErr *Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden
 }
 
 // Check makes the cheapest authenticated call, to test the token.
@@ -117,6 +124,17 @@ func (c *Client) Check(ctx context.Context) error {
 // ListServers returns all servers.
 func (c *Client) ListServers(ctx context.Context) ([]Server, error) {
 	return list[Server](ctx, c, "/servers")
+}
+
+// GetSite returns one site.
+func (c *Client) GetSite(ctx context.Context, id int64) (*Site, error) {
+	var out struct {
+		Data Site `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/sites/%d", id), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out.Data, nil
 }
 
 // ListSites returns all sites.
@@ -218,7 +236,7 @@ func (c *Client) do(ctx context.Context, method, path string, body url.Values, o
 		if body != nil {
 			reader = strings.NewReader(body.Encode())
 		}
-		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+		req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
 		if err != nil {
 			return fmt.Errorf("spinupwp: building request: %w", err)
 		}

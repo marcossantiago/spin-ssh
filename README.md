@@ -24,11 +24,18 @@ If you work on spin-ssh itself: `go install github.com/marcossantiago/spin-ssh@l
 
 - **Your public key must be on the SpinupWP team** (Team Settings → SSH Keys). Ask an
   admin to add it. spin-ssh never creates team keys.
-- **An API token.** On first run spin-ssh offers to open SpinupWP, where you create one
-  under My Account → API Tokens. Paste it in and spin-ssh checks it and saves it to
+- **An API token.** On first run spin-ssh asks for your SpinupWP organization (paste
+  any SpinupWP URL, or the part after `spinupwp.app/`) and offers to open its API
+  settings, `https://spinupwp.app/{ORGANIZATION_SLUG}/settings/api`, where you create a
+  token. Paste it in and spin-ssh checks it and saves it, with the organization, to
   `~/.config/spin-ssh/credentials.json`, readable only by you. If
   `SPINUPWP_API_TOKEN` is set, it's used instead. `spin-ssh token` replaces the saved
   token.
+  - **Read-only** is enough to list sites and connect, and is the safer choice. When
+    your key isn't on a site yet, spin-ssh tells you how to add it in SpinupWP, and
+    checks again next time.
+  - **Read-write** also lets spin-ssh add your key to a site (and `spin-ssh revoke`
+    remove it) for you.
 
 ### Updating
 
@@ -82,7 +89,9 @@ PHP version and whether your key is already on it.
   picker opens from the cache, and if the cache is older than 15 minutes it refreshes in
   the background. When you last used each site is kept in `recent.json` next to it.
 - **Access.** Picking a site your key isn't on yet calls
-  `POST /sites/{id}/site-user/ssh-keys` and waits for the event before connecting.
+  `POST /sites/{id}/site-user/ssh-keys` and waits for the event before connecting. If
+  SpinupWP refuses because the token is read-only, spin-ssh remembers that (by a hash of
+  the token) and from then on checks the site and explains how to add the key instead.
   SpinupWP has no API for sudo users, so spin-ssh only connects as site users.
 
 ## Releasing
