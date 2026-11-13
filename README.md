@@ -1,9 +1,22 @@
 # spin-ssh
 
-Search your SpinupWP sites and SSH in as the site user. If your key isn't on the site
-yet, spin-ssh adds it for you.
+**SSH into any SpinupWP site in seconds.** Type part of a domain, press enter, and
+you're in a shell as that site's user.
+
+No more digging through the SpinupWP dashboard for the server IP, the site user and
+the port, or adding your SSH key to each site by hand before you can log in.
 
 ![spin-ssh demo](demo/demo.gif)
+
+- 🔎 **Every site, one search.** Fuzzy-search all your team's sites across every
+  server. The ones you use most come first.
+- 🔑 **Access sorted for you.** If your key isn't on the site yet, spin-ssh adds it
+  through the SpinupWP API. With a read-only token, it links you straight to the
+  right page instead.
+- 🎯 **Always the right key.** It connects with your SSH key only, so no
+  "Too many authentication failures".
+- ⚡ **Instant.** Sites are cached and refresh in the background.
+- 📦 **One binary.** macOS and Linux, and it updates itself.
 
 ## Install
 

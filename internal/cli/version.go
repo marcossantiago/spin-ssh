@@ -1,12 +1,12 @@
-package main
+package cli
 
 import (
 	"runtime/debug"
 	"strings"
 )
 
-// version is set at release time: -ldflags "-X main.version=v1.2.3".
-var version = ""
+// version is the release version Main was given, or "".
+var version string
 
 // Version is the release tag, the module version for go install builds, or "dev"
 // with the commit for local builds.
