@@ -38,14 +38,18 @@ else
 fi
 
 if [ -z "$version" ]; then
-	# The latest release's page redirects to .../releases/tag/<version>. This avoids
-	# the GitHub API and its rate limit.
-	url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") ||
-		fail "couldn't reach GitHub"
-	version="${url##*/}"
+	# Ask the API for the latest release. If it's rate limited (60 requests an hour per
+	# IP), fall back to the latest release page, which usually redirects to its tag.
+	version=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null |
+		sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true
+	if [ -z "$version" ]; then
+		url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") ||
+			fail "couldn't reach GitHub"
+		version="${url##*/}"
+	fi
 	case "$version" in
 		v*) ;;
-		*) fail "no spin-ssh release found at https://github.com/$repo/releases" ;;
+		*) fail "couldn't find the latest release at https://github.com/$repo/releases; set SPIN_SSH_VERSION=vX.Y.Z" ;;
 	esac
 fi
 
