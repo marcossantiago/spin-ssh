@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/marcossantiago/spin-ssh/internal/spinupwp"
 	"github.com/marcossantiago/spin-ssh/internal/sshkeys"
 	"github.com/marcossantiago/spin-ssh/internal/store"
@@ -50,8 +52,20 @@ func ensureKey(client *spinupwp.Client, force bool) (*store.Config, error) {
 	switch matches := sshkeys.MatchTeam(local, team); len(matches) {
 	case 1:
 		chosen = matches[0]
+		showKey("Found your SSH key on the SpinupWP team:", chosen)
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			ok, err := ui.Confirm("Use this key?", true)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				if chosen, err = pickManually(local, team, false); err != nil {
+					return nil, err
+				}
+			}
+		}
 	case 0:
-		if chosen, err = pickManually(local, team); err != nil {
+		if chosen, err = pickManually(local, team, true); err != nil {
 			return nil, err
 		}
 	default:
@@ -73,8 +87,16 @@ func ensureKey(client *spinupwp.Client, force bool) (*store.Config, error) {
 	if err := store.SaveConfig(cfg); err != nil {
 		return nil, err
 	}
-	ui.Success("Using team key %q from %s. Change it with spin-ssh key.", chosen.Team.Name, chosen.Local.Describe())
+	ui.Success("Saved: spin-ssh connects with team key %q, local key %s.", chosen.Team.Name, chosen.Local.Describe())
+	ui.Note("Change it any time with spin-ssh key.")
 	return cfg, nil
+}
+
+// showKey prints which team key matched which local key, so the choice is visible.
+func showKey(heading string, m sshkeys.Match) {
+	ui.Note("%s", heading)
+	fmt.Fprintf(os.Stderr, "\n    Team key   %s\n    Local key  %s\n    SHA256     %s\n\n",
+		m.Team.Name, m.Local.Describe(), strings.TrimPrefix(m.Local.Fingerprint(), "SHA256:"))
 }
 
 func pickMatch(matches []sshkeys.Match) (sshkeys.Match, error) {
@@ -104,17 +126,20 @@ func pickMatch(matches []sshkeys.Match) (sshkeys.Match, error) {
 	return it.Value.(sshkeys.Match), nil
 }
 
-// pickManually handles a key spin-ssh couldn't find: outside ~/.ssh, or in an agent
-// ssh isn't set up to use. The user says which team key is theirs and where it is.
-func pickManually(local []sshkeys.Local, team []spinupwp.SSHKey) (sshkeys.Match, error) {
-	fmt.Fprintln(os.Stderr, "None of your SSH keys are on the SpinupWP team. Found:")
-	for _, l := range local {
-		fmt.Fprintf(os.Stderr, "  %s  %s\n", l.Fingerprint(), l.Describe())
+// pickManually handles a key spin-ssh couldn't find (outside ~/.ssh, or in an agent
+// ssh isn't set up to use) or that the user turned down. The user says which team key
+// is theirs and where its private key is.
+func pickManually(local []sshkeys.Local, team []spinupwp.SSHKey, noneFound bool) (sshkeys.Match, error) {
+	if noneFound {
+		fmt.Fprintln(os.Stderr, "None of your SSH keys are on the SpinupWP team. Found:")
+		for _, l := range local {
+			fmt.Fprintf(os.Stderr, "  %s  %s\n", l.Fingerprint(), l.Describe())
+		}
+		if len(local) == 0 {
+			fmt.Fprintln(os.Stderr, "  (no private keys in ~/.ssh and none in your SSH agent)")
+		}
+		fmt.Fprintln(os.Stderr, "If your key is elsewhere, pick it from the team's keys next. Otherwise ask an admin to add your public key in SpinupWP > Team Settings > SSH Keys.")
 	}
-	if len(local) == 0 {
-		fmt.Fprintln(os.Stderr, "  (no private keys in ~/.ssh and none in your SSH agent)")
-	}
-	fmt.Fprintln(os.Stderr, "If your key is elsewhere, pick it from the team's keys next. Otherwise ask an admin to add your public key in SpinupWP > Team Settings > SSH Keys.")
 
 	items := make([]ui.Item, len(team))
 	for i, t := range team {

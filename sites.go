@@ -170,6 +170,7 @@ func siteItem(s store.Site, cfg *store.Config, lastUsed time.Time, readOnly bool
 		{Label: "Address", Value: address},
 		{Label: "User", Value: s.SiteUser},
 		{Label: "PHP", Value: s.PHPVersion},
+		{Label: "Your key", Value: cfg.SSHKeyName},
 		access,
 		{Label: "Keys", Value: cmp.Or(strings.Join(names, ", "), "None"), Tone: ui.ToneDim},
 		{Label: "Last used", Value: used, Tone: ui.ToneDim},
