@@ -34,6 +34,7 @@ func fakeReadOnlyAPI(t *testing.T, keyOnSite int64, posts *atomic.Int32) *sessio
 func TestGrantWithReadOnlyToken(t *testing.T) {
 	var posts atomic.Int32
 	s := fakeReadOnlyAPI(t, 99, &posts)
+	_ = store.SaveCredentials(store.Credentials{Token: "t", Organization: "my-team"})
 	cfg := &store.Config{SSHKeyID: 1, SSHKeyName: "Me"}
 	site := &store.Site{ID: 7, Domain: "shop.example.com", UserAuth: "publickey"}
 
@@ -62,6 +63,17 @@ func TestGrantWithReadOnlyTokenAfterKeyAddedInSpinupWP(t *testing.T) {
 	}
 	if !site.HasKey(1) || posts.Load() != 0 {
 		t.Fatalf("site keys %v, %d POSTs", site.Keys, posts.Load())
+	}
+}
+
+func TestSiteSFTPURL(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if got := siteSFTPURL(269428); got != "" {
+		t.Fatalf("without an organization: %q", got)
+	}
+	_ = store.SaveCredentials(store.Credentials{Token: "t", Organization: "my-team"})
+	if got, want := siteSFTPURL(269428), "https://spinupwp.app/my-team/sites/269428#sftp"; got != want {
+		t.Fatalf("siteSFTPURL = %q, want %q", got, want)
 	}
 }
 

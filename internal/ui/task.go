@@ -209,3 +209,59 @@ func versionTag() string {
 	}
 	return "  " + currentTheme().fg(currentTheme().faint).Render("spin-ssh "+Version)
 }
+
+// Key is one choice for Keys: the key to press and what it does.
+type Key struct {
+	Key  string // as tea.KeyPressMsg.String() names it: "enter", "c", "esc"
+	Does string
+}
+
+// Keys waits for one of keys and returns its Key. ctrl+c returns ErrCancelled.
+func Keys(keys ...Key) (string, error) {
+	m := &keysModel{keys: keys}
+	if _, err := tea.NewProgram(m).Run(); err != nil {
+		return "", err
+	}
+	if m.pressed == "" {
+		return "", ErrCancelled
+	}
+	return m.pressed, nil
+}
+
+type keysModel struct {
+	keys    []Key
+	pressed string
+	done    bool
+}
+
+func (m *keysModel) Init() tea.Cmd { return nil }
+
+func (m *keysModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+	if key.String() == "ctrl+c" {
+		m.done = true
+		return m, tea.Quit
+	}
+	for _, k := range m.keys {
+		if strings.EqualFold(key.String(), k.Key) {
+			m.pressed, m.done = k.Key, true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m *keysModel) View() tea.View {
+	if m.done {
+		return tea.NewView("")
+	}
+	t := currentTheme()
+	parts := make([]string, len(m.keys))
+	for i, k := range m.keys {
+		parts[i] = t.fg(t.text).Bold(true).Render(k.Key) + " " + t.fg(t.dim).Render(k.Does)
+	}
+	return tea.NewView("   " + strings.Join(parts, t.fg(t.faint).Render("  ·  ")) + versionTag())
+}

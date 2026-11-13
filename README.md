@@ -32,8 +32,9 @@ If you work on spin-ssh itself: `go install github.com/marcossantiago/spin-ssh@l
   `SPINUPWP_API_TOKEN` is set, it's used instead. `spin-ssh token` replaces the saved
   token.
   - **Read-only** is enough to list sites and connect, and is the safer choice. When
-    your key isn't on a site yet, spin-ssh tells you how to add it in SpinupWP, and
-    checks again next time.
+    your key isn't on a site yet, spin-ssh links straight to the site's SFTP settings
+    in SpinupWP (press `o` to open it), waits while you add the key, then checks again
+    when you press enter and connects.
   - **Read-write** also lets spin-ssh add your key to a site (and `spin-ssh revoke`
     remove it) for you.
 

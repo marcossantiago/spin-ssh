@@ -225,11 +225,65 @@ func grant(s *session, cfg *store.Config, site *store.Site) error {
 	return store.UpdateSite(*site)
 }
 
-// grantByHand is grant for a read-only token. The key may have been added in
-// SpinupWP since the cache was filled, so it checks the site first; if the key still
-// isn't there it says how to add it, and offers to try anyway (it might be in
-// authorized_keys outside SpinupWP).
+// grantByHand is grant for a read-only token: the user adds the key in SpinupWP.
+// The key may already be there (added since the cache was filled), so it checks the
+// site first. Otherwise it links to the site's SFTP settings and waits: enter checks
+// again and connects once the key is there.
 func grantByHand(s *session, cfg *store.Config, site *store.Site) error {
+	if err := refreshSiteKeys(s, site); err != nil {
+		return err
+	}
+	if site.HasKey(cfg.SSHKeyID) {
+		return nil
+	}
+
+	url := siteSFTPURL(site.ID)
+	tty := term.IsTerminal(int(os.Stdin.Fd()))
+	last := "Come back here and press enter"
+	if !tty {
+		last = "Run spin-ssh again"
+	}
+	printSteps(fmt.Sprintf("🔒 Read-only token: add your key to %s in SpinupWP", site.Domain),
+		openStep(url, site),
+		fmt.Sprintf("Add the SSH key %q to site user %s", cfg.SSHKeyName, site.SiteUser),
+		last)
+	if !tty {
+		return errReported
+	}
+
+	keys := []ui.Key{{Key: "enter", Does: "check again"}, {Key: "c", Does: "connect anyway"}, {Key: "esc", Does: "quit"}}
+	if url != "" {
+		keys = append([]ui.Key{{Key: "o", Does: "open link"}}, keys...)
+	}
+	for {
+		k, err := ui.Keys(keys...)
+		if err != nil {
+			return err
+		}
+		switch k {
+		case "o":
+			if openBrowser(url) == nil {
+				fmt.Fprintln(os.Stderr, "   🌐 Opened in your browser")
+			}
+		case "enter":
+			if err := refreshSiteKeys(s, site); err != nil {
+				return err
+			}
+			if site.HasKey(cfg.SSHKeyID) {
+				fmt.Fprintf(os.Stderr, "   ✅ Your key is on %s\n", site.Domain)
+				return nil
+			}
+			fmt.Fprintln(os.Stderr, "   ⏳ Not there yet. SpinupWP can take a minute to apply it.")
+		case "c":
+			return nil
+		default:
+			return errReported
+		}
+	}
+}
+
+// refreshSiteKeys reloads the keys on one site and updates the cache.
+func refreshSiteKeys(s *session, site *store.Site) error {
 	var fresh *spinupwp.Site
 	err := ui.Run(fmt.Sprintf("Checking whether your key is on %s…", site.Domain), func(ctx context.Context) error {
 		var err error
@@ -240,30 +294,24 @@ func grantByHand(s *session, cfg *store.Config, site *store.Site) error {
 		return err
 	}
 	site.Keys = storeKeys(fresh.SSHKeys)
-	_ = store.UpdateSite(*site)
-	if site.HasKey(cfg.SSHKeyID) {
-		return nil
-	}
+	return store.UpdateSite(*site)
+}
 
-	ui.Warn("Your API token is read-only, so spin-ssh can't add your key to %s.", site.Domain)
-	fmt.Fprintf(os.Stderr, `
-  To add it yourself in SpinupWP:
-    1. Open %s and go to the site %s (server %s).
-    2. In the site's settings, add the SSH key %q to the site user %s.
-    3. Once SpinupWP has applied it, run spin-ssh again.
+// printSteps prints a heading and numbered steps, for things done in SpinupWP.
+func printSteps(heading string, steps ...string) {
+	fmt.Fprintf(os.Stderr, "\n%s\n\n", heading)
+	for i, step := range steps {
+		fmt.Fprintf(os.Stderr, "   %d. %s\n", i+1, step)
+	}
+	fmt.Fprintln(os.Stderr)
+}
 
-`, dashboardURL(), site.Domain, site.ServerName, cfg.SSHKeyName, site.SiteUser)
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return errReported
+// openStep is the first step: the direct link when the organization is known.
+func openStep(url string, site *store.Site) string {
+	if url != "" {
+		return "Open " + url
 	}
-	anyway, err := ui.Confirm("Try connecting anyway?", false)
-	if err != nil {
-		return err
-	}
-	if !anyway {
-		return errReported
-	}
-	return nil
+	return fmt.Sprintf("Open https://spinupwp.app, then the site %s and its SFTP tab", site.Domain)
 }
 
 func revoke(s *session, cfg *store.Config, opts options) error {
@@ -284,13 +332,15 @@ func revoke(s *session, cfg *store.Config, opts options) error {
 	}
 	if s.readOnly() || spinupwp.IsForbidden(err) {
 		_ = store.MarkReadOnly(s.token)
-		ui.Warn("Your API token is read-only, so spin-ssh can't remove your key from %s.", site.Domain)
-		fmt.Fprintf(os.Stderr, `
-  To remove it yourself in SpinupWP:
-    1. Open %s and go to the site %s (server %s).
-    2. In the site's settings, remove the SSH key %q from the site user %s.
-
-`, dashboardURL(), site.Domain, site.ServerName, cfg.SSHKeyName, site.SiteUser)
+		url := siteSFTPURL(site.ID)
+		printSteps(fmt.Sprintf("🔒 Read-only token: remove your key from %s in SpinupWP", site.Domain),
+			openStep(url, site),
+			fmt.Sprintf("Remove the SSH key %q from site user %s", cfg.SSHKeyName, site.SiteUser))
+		if url != "" && term.IsTerminal(int(os.Stdin.Fd())) {
+			if k, _ := ui.Keys(ui.Key{Key: "o", Does: "open link"}, ui.Key{Key: "esc", Does: "quit"}); k == "o" {
+				_ = openBrowser(url)
+			}
+		}
 		return errReported
 	}
 	if err != nil {

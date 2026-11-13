@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -25,12 +26,14 @@ func apiSettingsURL(org string) string {
 	return "https://spinupwp.app/" + org + "/settings/api"
 }
 
-// dashboardURL is the saved organization's SpinupWP dashboard, or SpinupWP itself.
-func dashboardURL() string {
-	if org := store.LoadCredentials().Organization; org != "" {
-		return "https://spinupwp.app/" + org
+// siteSFTPURL links to a site's SFTP settings, where its site user's SSH keys are, or
+// is "" when the organization isn't known.
+func siteSFTPURL(siteID int64) string {
+	org := store.LoadCredentials().Organization
+	if org == "" {
+		return ""
 	}
-	return "https://spinupwp.app"
+	return fmt.Sprintf("https://spinupwp.app/%s/sites/%d#sftp", org, siteID)
 }
 
 // parseOrganization accepts a slug or any SpinupWP URL and returns the slug.
